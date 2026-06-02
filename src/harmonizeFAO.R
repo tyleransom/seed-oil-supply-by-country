@@ -67,29 +67,57 @@ oil_types <- c(
 
 
 #-------------------------------------------------------------------------------
-# Harmonize aggregated series (across all oil types)
+# Harmonize each series via growth-rate backcasting (chain-link splice)
 #-------------------------------------------------------------------------------
-# Get average difference between 2010-2013 and adjust each series by that in the Old method
-adj <- df %>%
-    group_by(Area, `Element Code`, `Item Code (FBS)`) %>%
-    mutate(diff = New - Old) %>%
-    summarize(diff = mean(diff, na.rm = TRUE))
+# The previous approach added a constant level shift, mean(New - Old) over the
+# 2010-2013 overlap, to every pre-2014 Old value. Because seed-oil consumption
+# grew several-fold over 1961-2013, that constant absolute offset (estimated at
+# high modern levels) drove early-year values negative -- e.g. Canada 1961.
+#
+# Instead, anchor each series to the NEW methodology's level wherever New exists
+# and extend backward using the OLD series' own growth rates. For each
+# Area x Element x Item, with anchor = earliest year having New present and
+# Old > 0, the closed form is:
+#
+#     harmonized_t = New[anchor] * Old_t / Old[anchor]      (for t < anchor)
+#     harmonized_t = New_t                                  (wherever New exists)
+#
+# This is continuous at the anchor, reproduces the old series' year-over-year
+# growth, and cannot go negative when Old >= 0. It divides only by the fixed,
+# strictly-positive Old[anchor], so interior zeros in Old yield a clean 0 for
+# that year rather than propagating NaN (the failure mode of step-by-step
+# chaining), and no New/Old division ever runs away on a near-zero denominator.
+backcast <- function(Year, Old, New) {
+    ok <- !is.na(New) & !is.na(Old) & Old > 0
+    if (!any(ok)) return(New)          # no usable overlap link: keep New, leave pre-period NA
+    anchor <- min(Year[ok])
+    newA <- New[match(anchor, Year)]
+    oldA <- Old[match(anchor, Year)]
+    h <- New
+    fill <- is.na(New) & !is.na(Old)   # years the new methodology does not cover (pre-period)
+    h[fill] <- newA * Old[fill] / oldA
+    h
+}
 
 df <- df %>%
-    left_join(adj, by = c("Area", "Element Code", "Item Code (FBS)")) %>%
-    mutate(harmonized = Old + diff) %>%
-    # harmonized should be New if year is 2014 or later
-    mutate(harmonized = ifelse(Year >= 2014, New, harmonized))
+    group_by(Area, `Element Code`, `Item Code (FBS)`) %>%
+    arrange(Year, .by_group = TRUE) %>%
+    mutate(harmonized = backcast(Year, Old, New)) %>%
+    ungroup()
 
-# Aggregate
+# Aggregate (used by the diagnostic plots below)
 dfagg <- df %>%
     group_by(Area, Year, Element, `Element Code`) %>%
-    summarise(Old = sum(Old, na.rm = TRUE), 
+    summarise(Old = sum(Old, na.rm = TRUE),
               New = sum(New, na.rm = TRUE),
-              harmonized = sum(harmonized, na.rm = TRUE)) %>%
+              harmonized = sum(harmonized, na.rm = TRUE), .groups = "drop") %>%
     mutate(Old = ifelse(Old == 0, NA, Old),
-           New = ifelse(New == 0, NA, New),
-           harmonized = ifelse(Year >= 2014, NA, harmonized))
+           New = ifelse(New == 0, NA, New))
+
+# Sanity check: harmonized food supply can never be negative
+n_neg <- sum(df$harmonized < 0, na.rm = TRUE)
+if (n_neg > 0) warning(sprintf("%d negative harmonized values remain", n_neg)) else
+    message("Harmonization OK: no negative values")
 
 # # pounds per capita per year
 # ggplot(dfagg %>% filter(`Element Code`==645), aes(x = Year, y = Old, linetype = "Old")) +
