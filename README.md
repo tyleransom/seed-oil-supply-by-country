@@ -8,11 +8,15 @@ FAO changed its data collection methodology around 2014, creating discontinuitie
 
 ## Harmonization Method
 
-1. **Calculate adjustment factors**: For each country-item combination, compute the mean difference between new and old methodology values during the overlap period (2010-2013)
+Growth-rate backcasting (chain-link splice), applied per country × element × oil item:
 
-2. **Adjust historical data**: Add the calculated adjustment factor to all pre-2014 values using the old methodology
+1. **Find anchor**: Identify the earliest year in the overlap period (2010–2013) where both the new methodology value and the old methodology value are present and `Old > 0`.
 
-3. **Combine series**: Use adjusted old methodology data for 1961-2013 and new methodology data for 2014-2022
+2. **Backcast pre-period years**: For years before the anchor, set `harmonized = New[anchor] × Old_t / Old[anchor]`. This scales the old series proportionally to the new series' level, preserving year-over-year growth rates from the old methodology.
+
+3. **Use new methodology for covered years**: Where new methodology data exist, `harmonized = New`.
+
+**Why backcasting instead of an additive shift**: The previous method added a constant `mean(New − Old)` offset to all pre-2014 values. Because seed-oil consumption grew several-fold over 1961–2013, that offset (estimated at high modern levels) drove early-year values negative (e.g., Canada 1961). Backcasting scales proportionally, is continuous at the anchor year, and cannot go negative when `Old ≥ 0`.
 
 ## Data Sources
 
@@ -43,4 +47,13 @@ Two versions are exported:
 
 ## Usage
 
-Run `src/harmonizeFAO.R` with the raw CSV files in the `data/raw/` directory to generate harmonized datasets in `data/cleaned/`.
+The script uses relative paths and must be run from `src/`:
+
+```bash
+cd src && Rscript harmonizeFAO.R
+```
+
+Raw CSV files must be in `data/raw/`; harmonized outputs are written to `data/cleaned/`.
+
+## Disclaimer
+I used Claude Code to assist with implementation.
